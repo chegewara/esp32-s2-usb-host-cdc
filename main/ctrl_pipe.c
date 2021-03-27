@@ -14,6 +14,11 @@
 #include "hcd.h"
 #include "ctrl_pipe.h"
 
+hcd_pipe_handle_t ctrl_pipe_hdl;
+hcd_xfer_req_handle_t ctrl_req_hdls[NUM_XFER_REQS];
+uint8_t *ctrl_data_buffers[NUM_XFER_REQS];
+usb_irp_t *ctrl_irps[NUM_XFER_REQS];
+
 static QueueHandle_t ctrl_pipe_evt_queue;
 static ctrl_pipe_cb_t ctrl_pipe_cb;
 uint8_t bMaxPacketSize0;
@@ -110,10 +115,114 @@ void ctrl_pipe_event_task(void* p)
     while(1){
         xQueueReceive(ctrl_pipe_evt_queue, &msg, portMAX_DELAY);
         hcd_xfer_req_handle_t req_hdl = hcd_xfer_req_dequeue(msg.pipe_hdl);
+        hcd_pipe_handle_t pipe_hdl;
+        usb_irp_t *irp;
+        void *context;
         if(req_hdl == NULL) continue;
+
+        hcd_xfer_req_get_target(req_hdl, &pipe_hdl, &irp, &context);
+
+        usb_ctrl_req_t* ctrl = (usb_ctrl_req_t*)irp->data_buffer;
+
+        switch (msg.pipe_event)
+        {
+            case HCD_PIPE_EVENT_NONE:
+                break;
+
+            case HCD_PIPE_EVENT_XFER_REQ_DONE:
+                switch (ctrl->bRequest)
+                {
+                    case USB_B_REQUEST_GET_STATUS:
+                        break;
+
+                    case USB_B_REQUEST_CLEAR_FEATURE:
+                        break;
+
+                    case USB_B_REQUEST_SET_FEATURE:
+                        break;
+
+                    case USB_B_REQUEST_SET_ADDRESS:
+                        usbh_set_address_cb(ctrl->wValue, context);
+                        break;
+
+                    case USB_B_REQUEST_GET_DESCRIPTOR:
+                        switch ((ctrl->wValue >> 8) & 0xff)
+                        {
+                            case USB_W_VALUE_DT_DEVICE:
+                                usbh_get_device_desc_cb(irp->data_buffer + sizeof(usb_ctrl_req_t), irp->actual_num_bytes, context);
+                                break;
+                            
+                            case USB_W_VALUE_DT_CONFIG:
+                                usbh_get_config_desc_cb(irp->data_buffer + sizeof(usb_ctrl_req_t), irp->actual_num_bytes, context);
+                                break;
+                            
+                            case USB_W_VALUE_DT_STRING:
+                                usbh_get_string_cb((irp->data_buffer + sizeof(usb_ctrl_req_t)), irp->actual_num_bytes, context);
+                                break;
+
+                            case USB_W_VALUE_DT_INTERFACE:
+                                usbh_get_interface_desc_cb(irp->data_buffer + sizeof(usb_ctrl_req_t), irp->actual_num_bytes, context);
+                                break;
+                            
+                            case USB_W_VALUE_DT_ENDPOINT:
+                                usbh_get_endpoint_desc_cb(irp->data_buffer + sizeof(usb_ctrl_req_t), irp->actual_num_bytes, context);
+                                break;
+                            
+                            case USB_W_VALUE_DT_DEVICE_QUALIFIER:
+                                break;
+                            
+                            case USB_W_VALUE_DT_OTHER_SPEED_CONFIG:
+                                break;
+                            
+                            case USB_W_VALUE_DT_INTERFACE_POWER:
+                                usbh_get_power_desc_cb(irp->data_buffer + sizeof(usb_ctrl_req_t), irp->actual_num_bytes, context);
+                                break;
+                            
+                            default:
+                                break;
+                        }
+                        break;
+
+                    case USB_B_REQUEST_GET_CONFIGURATION:
+                        usbh_get_configuration_cb(*(uint8_t*)(irp->data_buffer + sizeof(usb_ctrl_req_t)), context);
+                        break;
+
+                    case USB_B_REQUEST_SET_CONFIGURATION:
+                        usbh_set_config_desc_cb(ctrl->wValue, context);
+                        break;
+
+                    case USB_B_REQUEST_SET_INTERFACE:
+                        break;
+
+                    case USB_B_REQUEST_SYNCH_FRAME:
+                    ESP_LOGI("", "SYNC");
+                        break;
+
+                    default:
+                        usbh_ctrl_pipe_class_specific_cb(msg, irp);
+                        break;
+                }
+            break;
+
+        case HCD_PIPE_EVENT_ERROR_XFER:
+            usbh_ctrl_pipe_error_cb(ctrl);
+            ESP_LOGW("", "XFER error: %d", irp->status);
+            hcd_pipe_command(msg.pipe_hdl, HCD_PIPE_CMD_RESET);
+            break;
+        
+        case HCD_PIPE_EVENT_ERROR_STALL:
+            usbh_ctrl_pipe_stalled_cb(ctrl);
+            ESP_LOGW("", "Device stalled: %s pipe, state: %d", msg.pipe_hdl == ctrl_pipe_hdl?"CTRL":"BULK", hcd_pipe_get_state(msg.pipe_hdl));
+            ESP_LOG_BUFFER_HEX_LEVEL("Ctrl data", ctrl, sizeof(usb_ctrl_req_t), ESP_LOG_INFO);
+            hcd_pipe_command(msg.pipe_hdl, HCD_PIPE_CMD_RESET);
+            break;
+
+            default:
+                break;
+        }
         if (ctrl_pipe_cb != NULL)
         {
-            ctrl_pipe_cb(msg, req_hdl);
+            ctrl_pipe_cb(msg, irp, context);
         }
     }
 }
@@ -155,8 +264,6 @@ void xfer_get_current_config()
     ctrl_irps[0]->num_bytes = bMaxPacketSize0;    //1 worst case MPS
     ctrl_irps[0]->data_buffer = ctrl_data_buffers[0];
     ctrl_irps[0]->num_iso_packets = 0;
-    ctrl_irps[0]->num_bytes = 0;
-
 
     //Enqueue those transfer requests
     if(ESP_OK == hcd_xfer_req_enqueue(ctrl_req_hdls[0])) {
@@ -171,7 +278,6 @@ void xfer_set_configuration(uint8_t num)
     ctrl_irps[2]->data_buffer = ctrl_data_buffers[2];
     ctrl_irps[2]->num_iso_packets = 0;
     ctrl_irps[2]->num_bytes = 0;
-
 
     //Enqueue those transfer requests
     if(ESP_OK == hcd_xfer_req_enqueue(ctrl_req_hdls[2])) {

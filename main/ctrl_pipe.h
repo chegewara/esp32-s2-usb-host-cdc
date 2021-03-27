@@ -2,9 +2,11 @@
 #pragma once
 #include "hcd.h"
 
+#define USBH_WEAK_CB __attribute__((weak))
+
 #define EVENT_QUEUE_LEN         10
 #define NUM_XFER_REQS           4
-#define XFER_DATA_MAX_LEN       256     //Just assume that will only IN/OUT 256 bytes for now
+#define XFER_DATA_MAX_LEN       1023     //Just assume that will only IN/OUT 64 bytes for now
 #define PORT_NUM                1
 
 #define USB_CTRL_REQ_INIT_GET_STRING(ctrl_req_ptr, lang, desc_index, len) ({ \
@@ -20,18 +22,31 @@ typedef struct {
     hcd_pipe_event_t pipe_event;
 } pipe_event_msg_t;
 
-hcd_pipe_handle_t ctrl_pipe_hdl;
-hcd_xfer_req_handle_t ctrl_req_hdls[NUM_XFER_REQS];
-uint8_t *ctrl_data_buffers[NUM_XFER_REQS];
-usb_irp_t *ctrl_irps[NUM_XFER_REQS];
-
-typedef void (*ctrl_pipe_cb_t)(pipe_event_msg_t msg, hcd_xfer_req_handle_t req_hdl);
+extern hcd_pipe_handle_t ctrl_pipe_hdl;
+extern hcd_xfer_req_handle_t ctrl_req_hdls[NUM_XFER_REQS];
+extern uint8_t *ctrl_data_buffers[NUM_XFER_REQS];
+extern usb_irp_t *ctrl_irps[NUM_XFER_REQS];
+typedef void (*ctrl_pipe_cb_t)(pipe_event_msg_t msg, usb_irp_t *irp, void *context);
 void register_ctrl_pipe_callback(ctrl_pipe_cb_t);
 
 void ctrl_pipe_event_task(void* p);
 void alloc_pipe_and_xfer_reqs_ctrl(hcd_port_handle_t port_hdl, hcd_pipe_handle_t* handle);
 void free_pipe_and_xfer_reqs_ctrl(hcd_pipe_handle_t pipe_hdl);
 
+USBH_WEAK_CB void usbh_get_device_desc_cb(uint8_t*, size_t, void*);
+USBH_WEAK_CB void usbh_get_config_desc_cb(uint8_t*, size_t, void*);
+USBH_WEAK_CB void usbh_get_string_cb(uint8_t*, size_t, void*);
+USBH_WEAK_CB void usbh_get_interface_desc_cb(uint8_t*, size_t, void*);
+USBH_WEAK_CB void usbh_get_endpoint_desc_cb(uint8_t*, size_t, void*);
+USBH_WEAK_CB void usbh_get_power_desc_cb(uint8_t*, size_t, void*);
+
+USBH_WEAK_CB void usbh_set_address_cb(uint16_t, void*);
+USBH_WEAK_CB void usbh_set_config_desc_cb(uint16_t, void*);
+USBH_WEAK_CB void usbh_get_configuration_cb(uint8_t, void*);
+
+USBH_WEAK_CB void usbh_ctrl_pipe_error_cb(usb_ctrl_req_t* ctrl);
+USBH_WEAK_CB void usbh_ctrl_pipe_stalled_cb(usb_ctrl_req_t* ctrl);
+USBH_WEAK_CB void usbh_ctrl_pipe_class_specific_cb(pipe_event_msg_t msg, usb_irp_t *irp);
 
 void xfer_get_device_desc();
 void xfer_set_address(uint8_t addr);

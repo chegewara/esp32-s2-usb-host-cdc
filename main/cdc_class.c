@@ -47,10 +47,19 @@ void cdc_pipe_event_task(void* p)
     while(1){
         xQueueReceive(cdc_pipe_evt_queue, &msg, portMAX_DELAY);
         hcd_xfer_req_handle_t req_hdl = hcd_xfer_req_dequeue(msg.pipe_hdl);
+        hcd_pipe_handle_t pipe_hdl;
+        usb_irp_t *irp;
+        void *context;
+        if(req_hdl == NULL) continue;
+
+        hcd_xfer_req_get_target(req_hdl, &pipe_hdl, &irp, &context);
+
+        usb_ctrl_req_t* ctrl = (usb_ctrl_req_t*)irp->data_buffer;
+
         if(req_hdl == NULL) continue;
         if (cdc_pipe_cb != NULL)
         {
-            cdc_pipe_cb(msg, req_hdl);
+            cdc_pipe_cb(msg, irp, context);
         }
     }
 }
@@ -253,7 +262,7 @@ void xfer_out_data(uint8_t* data, size_t len)
     }
 }
 
-void class_specific_data_cb(usb_irp_t* irp)
+void cdc_class_specific_ctrl_cb(usb_irp_t* irp)
 {
     if (irp->data_buffer[0] == SET_VALUE && irp->data_buffer[1] == SET_LINE_CODING) // set line coding
     {
@@ -269,7 +278,7 @@ void class_specific_data_cb(usb_irp_t* irp)
     {
         line_coding_t* data = (line_coding_t*)(irp->data_buffer + sizeof(usb_ctrl_req_t));
         ESP_LOGI("Set control line state", "");
-        xfer_set_line_coding(115200);
+        xfer_set_line_coding(115200, 0, 0, 5);
     }
 }
 

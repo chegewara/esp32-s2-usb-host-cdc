@@ -60,6 +60,33 @@ static void port_event_task(void* p)
         xQueueReceive(port_evt_queue, &msg, portMAX_DELAY);
         ESP_LOGI("", "port event: %d", msg.port_event);
         hcd_port_handle_event(msg.port_hdl);
+        switch (msg.port_event)
+        {
+            case HCD_PORT_EVENT_NONE:
+                break;
+
+            case HCD_PORT_EVENT_CONNECTION:
+                usbh_port_connection_cb(msg);
+                break;
+
+            case HCD_PORT_EVENT_DISCONNECTION:
+                hcd_port_command(msg.port_hdl, HCD_PORT_CMD_POWER_OFF);
+                usbh_port_disconnection_cb(msg);
+                break;
+
+            case HCD_PORT_EVENT_ERROR:
+                usbh_port_error_cb(msg);
+                break;
+
+            case HCD_PORT_EVENT_OVERCURRENT:
+                usbh_port_overcurrent_cb(msg);
+                break;
+
+            case HCD_PORT_EVENT_SUDDEN_DISCONN:
+                hcd_port_command(msg.port_hdl, HCD_PORT_CMD_RESET);
+                usbh_port_sudden_disconn_cb(msg);
+                break;
+        }
         if(port_evt_cb != NULL)
         {
             port_evt_cb(msg);
@@ -71,7 +98,6 @@ static void port_event_task(void* p)
 
 /**
  * @brief Creates port and pipe event queues. Sets up the HCD, and initializes a port.
- *
  */
 bool setup_usb_host()
 {

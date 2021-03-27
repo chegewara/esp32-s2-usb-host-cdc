@@ -3,7 +3,8 @@
 #include "ctrl_pipe.h"
 #include "usb_host_port.h"
 
-#define XFER_DATA_MAX_LEN       1023     //Just assume that will only IN/OUT 1023 bytes for now, which is max length for full speed
+// #define XFER_DATA_MAX_LEN       1023     //Just assume that will only IN/OUT 1023 bytes for now, which is max length for full speed
+#define DEVICE_ADDR             1
 
 #define USB_DESC_EP_GET_ADDRESS(desc_ptr) ((desc_ptr)->bEndpointAddress & 0x7F)
 
@@ -71,7 +72,7 @@ typedef union {
     (ctrl_req_ptr)->wLength = (0);   \
 })
 
-void xfer_set_line_coding(uint32_t);
+void xfer_set_line_coding(uint32_t bitrate, uint8_t cf, uint8_t parity, uint8_t bits);
 void xfer_set_control_line(bool dtr, bool rts);
 void xfer_get_line_coding();
 void xfer_intr_data();
@@ -80,4 +81,4 @@ void xfer_out_data(uint8_t* data, size_t len);
 void delete_pipes();
 void cdc_create_pipe(usb_desc_ep_t* ep);
 void register_cdc_pipe_callback(ctrl_pipe_cb_t cb);
-void class_specific_data_cb(usb_irp_t* irp);
+void cdc_class_specific_ctrl_cb(usb_irp_t* irp);
