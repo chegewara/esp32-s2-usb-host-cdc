@@ -110,7 +110,7 @@ static void parse_device_descriptor(uint8_t* data_buffer, usb_transfer_status_t 
         bMaxPacketSize0 = desc->bMaxPacketSize0;
 
         printf("Length: %d\n", desc->bLength);
-        printf("Descriptor type: %d\n", desc->bLength);
+        printf("Descriptor type: %d\n", desc->bDescriptorType);
         printf("USB version: %d.%02d\n", bcd_to_decimal(desc->bcdUSB >> 8), bcd_to_decimal(desc->bcdUSB & 0xff));
         printf("Device class: 0x%02x (%s)\n", desc->bDeviceClass, class_to_str(desc->bDeviceClass));
         printf("Device subclass: 0x%02x\n", desc->bDeviceSubClass);

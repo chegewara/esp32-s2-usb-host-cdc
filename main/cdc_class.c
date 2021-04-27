@@ -12,11 +12,11 @@
 
 
 hcd_pipe_handle_t cdc_ep_pipe_hdl[MAX_NUM_ENDP];
-hcd_xfer_req_handle_t cdc_ep_req_hdls[MAX_NUM_ENDP];
 uint8_t *cdc_data_buffers[MAX_NUM_ENDP];
 usb_irp_t *cdc_ep_irps[MAX_NUM_ENDP];
 usb_desc_ep_t endpoints[MAX_NUM_ENDP];
 int bMaxPacketSize0;
+extern hcd_pipe_handle_t ctrl_pipe_hdl;
 
 static QueueHandle_t cdc_pipe_evt_queue;
 static ctrl_pipe_cb_t cdc_pipe_cb;
@@ -46,17 +46,11 @@ void cdc_pipe_event_task(void* p)
 
     while(1){
         xQueueReceive(cdc_pipe_evt_queue, &msg, portMAX_DELAY);
-        hcd_xfer_req_handle_t req_hdl = hcd_xfer_req_dequeue(msg.pipe_hdl);
+        usb_irp_t* irp = hcd_irp_dequeue(msg.pipe_hdl);
         hcd_pipe_handle_t pipe_hdl;
-        usb_irp_t *irp;
-        void *context;
-        if(req_hdl == NULL) continue;
+        if(irp == NULL) continue;
+        void *context = irp->context;
 
-        hcd_xfer_req_get_target(req_hdl, &pipe_hdl, &irp, &context);
-
-        usb_ctrl_req_t* ctrl = (usb_ctrl_req_t*)irp->data_buffer;
-
-        if(req_hdl == NULL) continue;
         if (cdc_pipe_cb != NULL)
         {
             cdc_pipe_cb(msg, irp, context);
@@ -65,15 +59,15 @@ void cdc_pipe_event_task(void* p)
 }
 
 static void free_pipe_and_xfer_reqs(hcd_pipe_handle_t pipe_hdl,
-                                    hcd_xfer_req_handle_t *req_hdls,
+                                    // hcd_xfer_req_handle_t *req_hdls,
                                     uint8_t **data_buffers,
                                     usb_irp_t **irps,
                                     int num_xfers)
 {
     //Dequeue transfer requests
     do{
-        hcd_xfer_req_handle_t req_hdl = hcd_xfer_req_dequeue(pipe_hdl);
-        if(req_hdl == NULL) break;
+        usb_irp_t* irp = hcd_irp_dequeue(pipe_hdl);
+        if(irp == NULL) break;
     }while(1);
 
     ESP_LOGD("", "Freeing transfer requets\n");
@@ -81,7 +75,6 @@ static void free_pipe_and_xfer_reqs(hcd_pipe_handle_t pipe_hdl,
     for (int i = 0; i < num_xfers; i++) {
         heap_caps_free(irps[i]);
         heap_caps_free(data_buffers[i]);
-        hcd_xfer_req_free(req_hdls[i]);
     }
     ESP_LOGD("", "Freeing pipe\n");
     //Delete the pipe
@@ -93,7 +86,6 @@ static void free_pipe_and_xfer_reqs(hcd_pipe_handle_t pipe_hdl,
 static void alloc_pipe_and_xfer_reqs_cdc(hcd_port_handle_t port_hdl,
                                      QueueHandle_t pipe_evt_queue,
                                      hcd_pipe_handle_t *pipe_hdl,
-                                     hcd_xfer_req_handle_t *req_hdls,
                                      uint8_t **data_buffers,
                                      usb_irp_t **irps,
                                      int num_xfers,
@@ -103,8 +95,6 @@ static void alloc_pipe_and_xfer_reqs_cdc(hcd_port_handle_t port_hdl,
     usb_speed_t port_speed;
     if(ESP_OK == hcd_port_get_speed(port_hdl, &port_speed)){}
 
-    //Create default pipe
-    // printf("Creating default pipe\n");
     hcd_pipe_config_t config = {
         .callback = cdc_pipe_callback,
         .callback_arg = (void *)pipe_evt_queue,
@@ -116,21 +106,19 @@ static void alloc_pipe_and_xfer_reqs_cdc(hcd_port_handle_t port_hdl,
     if(ESP_OK == hcd_pipe_alloc(port_hdl, &config, pipe_hdl)) {}
     if(NULL == pipe_hdl) {
         ESP_LOGE("", "NULL == pipe_hdl");
+        return;
     }
     //Create transfer requests (and other required objects such as IRPs and data buffers)
     printf("Creating transfer requests\n");
     for (int i = 0; i < num_xfers; i++) {
-        //Allocate transfer request object
-        req_hdls[i] = hcd_xfer_req_alloc();
-        if(NULL == req_hdls[i]) ESP_LOGE("", "err 4");
-        //Allocate data buffers
-        data_buffers[i] = heap_caps_malloc(sizeof(usb_ctrl_req_t) + XFER_DATA_MAX_LEN, MALLOC_CAP_DMA);
-        if(NULL == data_buffers[i]) ESP_LOGE("", "err 5");
-        //Allocate IRP object
-        irps[i] = heap_caps_malloc(sizeof(usb_irp_t), MALLOC_CAP_DEFAULT);
+        irps[i] = heap_caps_calloc(1, sizeof(usb_irp_t), MALLOC_CAP_DEFAULT);
         if(NULL == irps[i]) ESP_LOGE("", "err 6");
-        //Set the transfer request's target
-        hcd_xfer_req_set_target(req_hdls[i], *pipe_hdl, irps[i], (void*)i);
+        //Allocate data buffers
+        data_buffers = heap_caps_calloc(1, sizeof(usb_ctrl_req_t) + TRANSFER_DATA_MAX_BYTES, MALLOC_CAP_DMA);
+        if(NULL == data_buffers) ESP_LOGE("", "err 5");
+        //Initialize IRP and IRP list
+        irps[i]->data_buffer = data_buffers;
+        irps[i]->num_iso_packets = 0;
     }
 }
 
@@ -140,13 +128,13 @@ void cdc_create_pipe(usb_desc_ep_t* ep)
         cdc_pipe_evt_queue = xQueueCreate(10, sizeof(pipe_event_msg_t));
     if(USB_DESC_EP_GET_XFERTYPE(ep) == USB_XFER_TYPE_INTR){
         memcpy(&endpoints[EP1], ep, sizeof(usb_desc_ep_t));
-        alloc_pipe_and_xfer_reqs_cdc(port_hdl, cdc_pipe_evt_queue, &cdc_ep_pipe_hdl[EP1], &cdc_ep_req_hdls[EP1], &cdc_data_buffers[EP1], &cdc_ep_irps[EP1], 1, ep);
+        alloc_pipe_and_xfer_reqs_cdc(port_hdl, cdc_pipe_evt_queue, &cdc_ep_pipe_hdl[EP1], &cdc_data_buffers[EP1], &cdc_ep_irps[EP1], 1, ep);
     } else if(USB_DESC_EP_GET_XFERTYPE(ep) == USB_XFER_TYPE_BULK && USB_DESC_EP_GET_EP_DIR(ep)){
         memcpy(&endpoints[EP2], ep, sizeof(usb_desc_ep_t));
-        alloc_pipe_and_xfer_reqs_cdc(port_hdl, cdc_pipe_evt_queue, &cdc_ep_pipe_hdl[EP2], &cdc_ep_req_hdls[EP2], &cdc_data_buffers[EP2], &cdc_ep_irps[EP2], 1, ep);
+        alloc_pipe_and_xfer_reqs_cdc(port_hdl, cdc_pipe_evt_queue, &cdc_ep_pipe_hdl[EP2], &cdc_data_buffers[EP2], &cdc_ep_irps[EP2], 1, ep);
     } else {
         memcpy(&endpoints[EP3], ep, sizeof(usb_desc_ep_t));
-        alloc_pipe_and_xfer_reqs_cdc(port_hdl, cdc_pipe_evt_queue, &cdc_ep_pipe_hdl[EP3], &cdc_ep_req_hdls[EP3], &cdc_data_buffers[EP3], &cdc_ep_irps[EP3], 1, ep);
+        alloc_pipe_and_xfer_reqs_cdc(port_hdl, cdc_pipe_evt_queue, &cdc_ep_pipe_hdl[EP3], &cdc_data_buffers[EP3], &cdc_ep_irps[EP3], 1, ep);
     }
 }
 
@@ -158,7 +146,7 @@ void delete_pipes()
         if (HCD_PIPE_STATE_INVALID == hcd_pipe_get_state(cdc_ep_pipe_hdl[i]))
         {                
             ESP_LOGD("", "pipe state: %d", hcd_pipe_get_state(cdc_ep_pipe_hdl[i]));
-            free_pipe_and_xfer_reqs( cdc_ep_pipe_hdl[i], &cdc_ep_req_hdls[i], &cdc_data_buffers[i], &cdc_ep_irps[i], 1);
+            free_pipe_and_xfer_reqs( cdc_ep_pipe_hdl[i], &cdc_data_buffers[i], &cdc_ep_irps[i], 1);
             cdc_ep_pipe_hdl[i] = NULL;
         }
     }
@@ -166,15 +154,14 @@ void delete_pipes()
 
 void xfer_set_line_coding(uint32_t bitrate, uint8_t cf, uint8_t parity, uint8_t bits)
 {
-    USB_CTRL_REQ_CDC_SET_LINE_CODING((cdc_ctrl_line_t *) ctrl_data_buffers[0], 0, bitrate, cf, parity, bits);
+    USB_CTRL_REQ_CDC_SET_LINE_CODING((cdc_ctrl_line_t *) ctrl_irps[0]->data_buffer, 0, bitrate, cf, parity, bits);
 
     ctrl_irps[0]->num_bytes = bMaxPacketSize0;
-    ctrl_irps[0]->data_buffer = ctrl_data_buffers[0];
     ctrl_irps[0]->num_iso_packets = 0;
     ctrl_irps[0]->num_bytes = 7; // bytes in data packet (excluding 8 control bytes)
 
     esp_err_t err;
-    if(ESP_OK == (err = hcd_xfer_req_enqueue(ctrl_req_hdls[0]))) {
+    if(ESP_OK == (err = hcd_irp_enqueue(ctrl_pipe_hdl, ctrl_irps[0]))) {
         ESP_LOGD("xfer", "set line codding");
     } else {
         ESP_LOGW("xfer", "set line codding: 0x%x", err);
@@ -191,7 +178,7 @@ void xfer_get_line_coding()
     ctrl_irps[0]->num_bytes = 7;
 
     esp_err_t err;
-    if(ESP_OK == (err = hcd_xfer_req_enqueue(ctrl_req_hdls[0]))) {
+    if(ESP_OK == (err = hcd_irp_enqueue(ctrl_pipe_hdl, ctrl_irps[0]))) {
         ESP_LOGD("xfer", "get line codding");
     } else {
         ESP_LOGW("xfer", "get line codding: 0x%x", err);
@@ -208,7 +195,7 @@ void xfer_set_control_line(bool dtr, bool rts)
     ctrl_irps[0]->num_bytes = 0;
 
     esp_err_t err;
-    if(ESP_OK == (err = hcd_xfer_req_enqueue(ctrl_req_hdls[0]))) {
+    if(ESP_OK == (err = hcd_irp_enqueue(ctrl_pipe_hdl, ctrl_irps[0]))) {
         ESP_LOGD("xfer", "set line codding");
     } else {
         ESP_LOGW("xfer", "set control line: 0x%x", err);
@@ -225,7 +212,7 @@ void xfer_intr_data()
     cdc_ep_irps[EP1]->num_bytes = 8;
 
     esp_err_t err;
-    if(ESP_OK == (err = hcd_xfer_req_enqueue(cdc_ep_req_hdls[EP1]))) {
+    if(ESP_OK == (err = hcd_irp_enqueue(cdc_ep_pipe_hdl[EP1], cdc_ep_irps[EP1]))) {
         ESP_LOGI("", "INT ");
     } else {
         ESP_LOGE("", "INT err: 0x%02x", err);
@@ -235,14 +222,12 @@ void xfer_intr_data()
 void xfer_in_data()
 {
     ESP_LOGD("", "EP: 0x%02x", USB_DESC_EP_GET_ADDRESS(&endpoints[EP2]));
-    memset(cdc_data_buffers[EP2], 0x0, 64);
     cdc_ep_irps[EP2]->num_bytes = bMaxPacketSize0;    //1 worst case MPS
-    cdc_ep_irps[EP2]->data_buffer = cdc_data_buffers[EP2];
     cdc_ep_irps[EP2]->num_iso_packets = 0;
     cdc_ep_irps[EP2]->num_bytes = 64;
 
     esp_err_t err;
-    if(ESP_OK != (err = hcd_xfer_req_enqueue(cdc_ep_req_hdls[EP2]))) {
+    if(ESP_OK != (err = hcd_irp_enqueue(cdc_ep_pipe_hdl[EP2], cdc_ep_irps[EP2]))) {
         ESP_LOGW("", "BULK %s, dir: %d, err: 0x%x", "IN", USB_DESC_EP_GET_EP_DIR(&endpoints[EP2]), err);
     }
 }
@@ -250,14 +235,13 @@ void xfer_in_data()
 void xfer_out_data(uint8_t* data, size_t len)
 {
     ESP_LOGD("", "EP: 0x%02x", USB_DESC_EP_GET_ADDRESS(&endpoints[EP3]));
-    memcpy(cdc_data_buffers[EP3], data, len);
+    memcpy(cdc_ep_irps[EP3]->data_buffer, data, len);
     cdc_ep_irps[EP3]->num_bytes = bMaxPacketSize0;    //1 worst case MPS
-    cdc_ep_irps[EP3]->data_buffer = cdc_data_buffers[2];
     cdc_ep_irps[EP3]->num_iso_packets = 0;
     cdc_ep_irps[EP3]->num_bytes = len;
 
     esp_err_t err;
-    if(ESP_OK != (err = hcd_xfer_req_enqueue(cdc_ep_req_hdls[EP3]))) {
+    if(ESP_OK != (err = hcd_irp_enqueue(cdc_ep_pipe_hdl[EP3], cdc_ep_irps[EP3]))) {
         ESP_LOGW("", "BULK %s, dir: %d, err: 0x%x", "OUT", USB_DESC_EP_GET_EP_DIR(&endpoints[EP3]), err);
     }
 }

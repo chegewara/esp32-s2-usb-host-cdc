@@ -112,4 +112,9 @@ I (7306) Set control line state:
 I (7311) Set line coding: Bitrate: 115200, stop bits: 0, parity: 0, bits: 5
 ```
 
+### Testing
+- after connecting we can start sending data from CDC ACM device to host and see received data in logs,
+- when we send `?` from device then host should send back `test\n` to device
+
+
 Have a nice play.
