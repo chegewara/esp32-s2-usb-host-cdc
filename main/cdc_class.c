@@ -126,13 +126,16 @@ void cdc_create_pipe(usb_desc_ep_t* ep)
 {
     if(cdc_pipe_evt_queue == NULL)
         cdc_pipe_evt_queue = xQueueCreate(10, sizeof(pipe_event_msg_t));
-    if(USB_DESC_EP_GET_XFERTYPE(ep) == USB_XFER_TYPE_INTR){
+    if(USB_DESC_EP_GET_XFERTYPE(ep) == USB_TRANSFER_TYPE_INTR){
+        ESP_LOGI("", "create INTR endpoint");
         memcpy(&endpoints[EP1], ep, sizeof(usb_desc_ep_t));
         alloc_pipe_and_xfer_reqs_cdc(port_hdl, cdc_pipe_evt_queue, &cdc_ep_pipe_hdl[EP1], &cdc_data_buffers[EP1], &cdc_ep_irps[EP1], 1, ep);
-    } else if(USB_DESC_EP_GET_XFERTYPE(ep) == USB_XFER_TYPE_BULK && USB_DESC_EP_GET_EP_DIR(ep)){
+    } else if(USB_DESC_EP_GET_XFERTYPE(ep) == USB_TRANSFER_TYPE_BULK && USB_DESC_EP_GET_EP_DIR(ep)){
+        ESP_LOGI("", "create BULK1 endpoint");
         memcpy(&endpoints[EP2], ep, sizeof(usb_desc_ep_t));
         alloc_pipe_and_xfer_reqs_cdc(port_hdl, cdc_pipe_evt_queue, &cdc_ep_pipe_hdl[EP2], &cdc_data_buffers[EP2], &cdc_ep_irps[EP2], 1, ep);
     } else {
+        ESP_LOGI("", "create BULK2 endpoint");
         memcpy(&endpoints[EP3], ep, sizeof(usb_desc_ep_t));
         alloc_pipe_and_xfer_reqs_cdc(port_hdl, cdc_pipe_evt_queue, &cdc_ep_pipe_hdl[EP3], &cdc_data_buffers[EP3], &cdc_ep_irps[EP3], 1, ep);
     }
@@ -154,14 +157,11 @@ void delete_pipes()
 
 void xfer_set_line_coding(uint32_t bitrate, uint8_t cf, uint8_t parity, uint8_t bits)
 {
-    USB_CTRL_REQ_CDC_SET_LINE_CODING((cdc_ctrl_line_t *) ctrl_irps[0]->data_buffer, 0, bitrate, cf, parity, bits);
-
-    ctrl_irps[0]->num_bytes = bMaxPacketSize0;
-    ctrl_irps[0]->num_iso_packets = 0;
-    ctrl_irps[0]->num_bytes = 7; // bytes in data packet (excluding 8 control bytes)
+    usb_irp_t *irp = allocate_irp(port_hdl, 7);
+    USB_CTRL_REQ_CDC_SET_LINE_CODING((cdc_ctrl_line_t *) irp->data_buffer, 0, bitrate, cf, parity, bits);
 
     esp_err_t err;
-    if(ESP_OK == (err = hcd_irp_enqueue(ctrl_pipe_hdl, ctrl_irps[0]))) {
+    if(ESP_OK == (err = hcd_irp_enqueue(ctrl_pipe_hdl, irp))) {
         ESP_LOGD("xfer", "set line codding");
     } else {
         ESP_LOGW("xfer", "set line codding: 0x%x", err);
@@ -170,33 +170,25 @@ void xfer_set_line_coding(uint32_t bitrate, uint8_t cf, uint8_t parity, uint8_t 
 
 void xfer_get_line_coding()
 {
-    USB_CTRL_REQ_CDC_GET_LINE_CODING((usb_ctrl_req_t *) ctrl_data_buffers[0], 0);
-
-    ctrl_irps[0]->num_bytes = bMaxPacketSize0;
-    ctrl_irps[0]->data_buffer = ctrl_data_buffers[0];
-    ctrl_irps[0]->num_iso_packets = 0;
-    ctrl_irps[0]->num_bytes = 7;
+    usb_irp_t *irp = allocate_irp(port_hdl, 7);
+    USB_CTRL_REQ_CDC_GET_LINE_CODING((usb_ctrl_req_t *) irp->data_buffer, 0);
 
     esp_err_t err;
-    if(ESP_OK == (err = hcd_irp_enqueue(ctrl_pipe_hdl, ctrl_irps[0]))) {
+    if(ESP_OK == (err = hcd_irp_enqueue(ctrl_pipe_hdl, irp))) {
         ESP_LOGD("xfer", "get line codding");
     } else {
         ESP_LOGW("xfer", "get line codding: 0x%x", err);
     }
 }
 
-void xfer_set_control_line(bool dtr, bool rts)
+void xfer_set_control_line(hcd_port_handle_t port_hdl, hcd_pipe_handle_t handle, bool dtr, bool rts)
 {
-    USB_CTRL_REQ_CDC_SET_CONTROL_LINE_STATE((usb_ctrl_req_t *) ctrl_data_buffers[0], 0, dtr, rts);
-
-    ctrl_irps[0]->num_bytes = bMaxPacketSize0;
-    ctrl_irps[0]->data_buffer = ctrl_data_buffers[0];
-    ctrl_irps[0]->num_iso_packets = 0;
-    ctrl_irps[0]->num_bytes = 0;
+    usb_irp_t *irp = allocate_irp(port_hdl, 0);
+    USB_CTRL_REQ_CDC_SET_CONTROL_LINE_STATE((usb_ctrl_req_t *) irp->data_buffer, 0, dtr, rts);
 
     esp_err_t err;
-    if(ESP_OK == (err = hcd_irp_enqueue(ctrl_pipe_hdl, ctrl_irps[0]))) {
-        ESP_LOGD("xfer", "set line codding");
+    if(ESP_OK == (err = hcd_irp_enqueue(handle, irp))) {
+        ESP_LOGD("xfer", "set control line");
     } else {
         ESP_LOGW("xfer", "set control line: 0x%x", err);
     }

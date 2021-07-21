@@ -73,7 +73,7 @@ typedef union {
 })
 
 void xfer_set_line_coding(uint32_t bitrate, uint8_t cf, uint8_t parity, uint8_t bits);
-void xfer_set_control_line(bool dtr, bool rts);
+void xfer_set_control_line(hcd_port_handle_t port_hdl, hcd_pipe_handle_t handle, bool dtr, bool rts);
 void xfer_get_line_coding();
 void xfer_intr_data();
 void xfer_in_data();

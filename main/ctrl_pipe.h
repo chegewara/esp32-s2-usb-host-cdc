@@ -1,6 +1,7 @@
 
 #pragma once
 #include "hcd.h"
+#include "usb.h"
 
 #define USBH_WEAK_CB __attribute__((weak))
 
@@ -47,9 +48,11 @@ USBH_WEAK_CB void usbh_ctrl_pipe_error_cb(usb_ctrl_req_t* ctrl);
 USBH_WEAK_CB void usbh_ctrl_pipe_stalled_cb(usb_ctrl_req_t* ctrl);
 USBH_WEAK_CB void usbh_ctrl_pipe_class_specific_cb(pipe_event_msg_t msg, usb_irp_t *irp);
 
-void xfer_get_device_desc();
-void xfer_set_address(uint8_t addr);
-void xfer_get_current_config();
-void xfer_set_configuration(uint8_t);
-void xfer_get_desc();
-void xfer_get_string(uint8_t);
+void xfer_get_device_desc(hcd_port_handle_t port_hdl, hcd_pipe_handle_t handle);
+void xfer_set_address(hcd_port_handle_t port_hdl, hcd_pipe_handle_t handle, uint8_t addr);
+void xfer_get_current_config(hcd_port_handle_t port_hdl, hcd_pipe_handle_t handle);
+void xfer_set_configuration(hcd_port_handle_t port_hdl, hcd_pipe_handle_t handle, uint8_t);
+void xfer_get_desc(hcd_port_handle_t port_hdl, hcd_pipe_handle_t handle);
+void xfer_get_string(hcd_port_handle_t port_hdl, hcd_pipe_handle_t handle, uint8_t);
+void allocate_ctrl_pipe(hcd_port_handle_t port_hdl, hcd_pipe_handle_t* handle);
+usb_irp_t* allocate_irp(hcd_port_handle_t port_hdl, size_t size);

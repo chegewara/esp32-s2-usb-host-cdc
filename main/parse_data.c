@@ -11,12 +11,12 @@
 #include "hal/usbh_ll.h"
 #include "hcd.h"
 #include "esp_log.h"
-#include "cdc_class.h"
 
 #define USB_W_VALUE_DT_HID                  0x22
 #define USB_W_VALUE_DT_CS_INTERFACE         0x24
 
 static uint8_t itf = 0;
+extern void cdc_create_pipe(usb_desc_ep_t* ep);
 
 static void create_pipe(usb_desc_ep_t* ep)
 {
@@ -136,7 +136,7 @@ void parse_cfg_descriptor(uint8_t* data_buffer, usb_transfer_status_t status, ui
         uint8_t offset = 0;
         uint8_t type = *(&data_buffer[0] + offset + 1);
         do{
-            ESP_LOGD("", "type: %d, off: %d, len: %d\n", type, offset, len);
+            ESP_LOGD("", "type: %d\n", type);
             switch (type)
             {
                 case USB_W_VALUE_DT_DEVICE:
